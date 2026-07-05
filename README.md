@@ -45,6 +45,11 @@ The SOC Analyst Agent is built on a FastAPI (Python 3.11+) backend that orchestr
 
 ## Architecture
 
+![7-Layer Architecture](docs/diagrams/architecture-7-layer.png)
+
+*Where RAG sits in the stack — the 7-layer enterprise AI agent architecture.*
+
+
 ```mermaid
 graph TB
     subgraph "Data Sources"
