@@ -1,0 +1,174 @@
+# ===========================================================================
+# SOC Analyst Agent -- Development environment configuration
+# ===========================================================================
+# All services point to localhost.  Threat-intelligence calls are mocked.
+# Debug logging is enabled and token budgets are unlimited.
+
+environment: development
+
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+app:
+  name: soc-analyst-agent
+  host: 0.0.0.0
+  port: 8000
+  debug: true
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: DEBUG
+  format: console          # human-readable, coloured output
+  include_caller: true
+  structlog_processors:
+    - structlog.dev.ConsoleRenderer
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+database:
+  url: "postgresql+asyncpg://postgres:postgres@localhost:5432/soc_analyst_agent_dev"
+  pool_size: 5
+  max_overflow: 5
+  echo: true               # log all SQL statements
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+redis:
+  url: "redis://localhost:6379/0"
+
+# ---------------------------------------------------------------------------
+# LLM Layer
+# ---------------------------------------------------------------------------
+llm:
+  provider: openai
+  model: gpt-4o
+  temperature: 0.1
+  max_tokens: 4096
+  embedding_model: text-embedding-3-large
+  embedding_dimensions: 3072
+  token_budget:
+    daily_limit: 0          # 0 = unlimited
+    per_request_limit: 0
+
+# ---------------------------------------------------------------------------
+# Vector Store
+# ---------------------------------------------------------------------------
+vector_store:
+  type: chromadb            # lightweight local store for dev
+  path: "./data/chroma_dev"
+  collection: soc_analyst_dev
+
+# ---------------------------------------------------------------------------
+# SIEM (mocked in dev)
+# ---------------------------------------------------------------------------
+siem:
+  splunk:
+    base_url: "https://localhost:8089"
+    verify_ssl: false
+    mock: true
+  elastic:
+    base_url: "https://localhost:9200"
+    mock: true
+  sentinel:
+    workspace_id: "00000000-0000-0000-0000-000000000000"
+    mock: true
+
+# ---------------------------------------------------------------------------
+# Threat Intelligence (mocked -- no API calls in dev)
+# ---------------------------------------------------------------------------
+threat_intel:
+  mock: true
+  virustotal:
+    enabled: false
+    tier: free
+  abuseipdb:
+    enabled: false
+  shodan:
+    enabled: false
+  urlscan:
+    enabled: false
+  misp:
+    base_url: "https://localhost"
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Incident Management
+# ---------------------------------------------------------------------------
+incident_management:
+  store: memory             # in-memory store for dev
+  crowdstrike:
+    base_url: "https://api.crowdstrike.com"
+    mock: true
+  ad_integration:
+    mock: true
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+notifications:
+  slack:
+    enabled: false
+  teams:
+    enabled: false
+  email:
+    enabled: false
+    smtp_host: localhost
+    smtp_port: 1025          # MailHog / MailPit local
+  pagerduty:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Internal APIs
+# ---------------------------------------------------------------------------
+internal_apis:
+  cmdb:
+    base_url: "http://localhost:8080/api/v1"
+    mock: true
+  netbox:
+    base_url: "http://localhost:8080/api"
+    mock: true
+  vulnerability_scanner:
+    type: tenable
+    mock: true
+
+# ---------------------------------------------------------------------------
+# Data Ingestion
+# ---------------------------------------------------------------------------
+ingestion:
+  chunk_size: 512
+  chunk_overlap: 64
+  sources:
+    - type: mitre_attack
+      schedule: manual       # run manually in dev
+    - type: nvd
+      days_back: 7
+      schedule: manual
+
+# ---------------------------------------------------------------------------
+# Rate Limits
+# ---------------------------------------------------------------------------
+rate_limits:
+  api_requests_per_minute: 1000
+  tool_executions_per_minute: 500
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+auth:
+  jwt_secret: "dev-secret-change-in-production"
+  jwt_algorithm: HS256
+  jwt_expiration_hours: 72   # longer sessions for dev
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+observability:
+  tracing:
+    enabled: false
+  metrics:
+    enabled: false
+  otel_endpoint: "http://localhost:4317"

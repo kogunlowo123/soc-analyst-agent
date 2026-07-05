@@ -1,0 +1,187 @@
+# ===========================================================================
+# SOC Analyst Agent -- Staging / QA environment configuration
+# ===========================================================================
+# Uses cloud-hosted services with test API keys.  Production-like rate
+# limits are enforced and the token budget is capped.
+
+environment: staging
+
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+app:
+  name: soc-analyst-agent
+  host: 0.0.0.0
+  port: 8000
+  debug: false
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: INFO
+  format: json              # structured JSON for log aggregation
+  include_caller: false
+  structlog_processors:
+    - structlog.processors.JSONRenderer
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+database:
+  url: "${DATABASE_URL}"    # injected via secret manager
+  pool_size: 10
+  max_overflow: 10
+  echo: false
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+redis:
+  url: "${REDIS_URL}"
+
+# ---------------------------------------------------------------------------
+# LLM Layer
+# ---------------------------------------------------------------------------
+llm:
+  provider: openai
+  model: gpt-4o
+  temperature: 0.1
+  max_tokens: 4096
+  embedding_model: text-embedding-3-large
+  embedding_dimensions: 3072
+  token_budget:
+    daily_limit: 100000     # 100 K tokens / day
+    per_request_limit: 8192
+
+# ---------------------------------------------------------------------------
+# Vector Store
+# ---------------------------------------------------------------------------
+vector_store:
+  type: opensearch
+  url: "${OPENSEARCH_URL}"
+  index: soc_analyst_staging_vectors
+  username: "${OPENSEARCH_USER}"
+  password: "${OPENSEARCH_PASSWORD}"
+
+# ---------------------------------------------------------------------------
+# SIEM
+# ---------------------------------------------------------------------------
+siem:
+  splunk:
+    base_url: "${SPLUNK_BASE_URL}"
+    verify_ssl: true
+    mock: false
+  elastic:
+    base_url: "${ELASTIC_BASE_URL}"
+    mock: false
+  sentinel:
+    workspace_id: "${SENTINEL_WORKSPACE_ID}"
+    mock: false
+
+# ---------------------------------------------------------------------------
+# Threat Intelligence (real APIs with test keys)
+# ---------------------------------------------------------------------------
+threat_intel:
+  mock: false
+  virustotal:
+    enabled: true
+    tier: free               # test key, free tier
+  abuseipdb:
+    enabled: true
+  shodan:
+    enabled: true
+  urlscan:
+    enabled: true
+  misp:
+    base_url: "${MISP_BASE_URL}"
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Incident Management
+# ---------------------------------------------------------------------------
+incident_management:
+  store: database
+  crowdstrike:
+    base_url: "${CROWDSTRIKE_BASE_URL}"
+    mock: false
+  ad_integration:
+    mock: false
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+notifications:
+  slack:
+    enabled: true
+    channel: "#soc-staging-alerts"
+  teams:
+    enabled: true
+  email:
+    enabled: true
+    provider: sendgrid
+  pagerduty:
+    enabled: false           # no PD paging in staging
+
+# ---------------------------------------------------------------------------
+# Internal APIs
+# ---------------------------------------------------------------------------
+internal_apis:
+  cmdb:
+    base_url: "${CMDB_BASE_URL}"
+    mock: false
+  netbox:
+    base_url: "${NETMGMT_BASE_URL}"
+    mock: false
+  vulnerability_scanner:
+    type: tenable
+    mock: false
+
+# ---------------------------------------------------------------------------
+# Data Ingestion
+# ---------------------------------------------------------------------------
+ingestion:
+  chunk_size: 512
+  chunk_overlap: 64
+  sources:
+    - type: mitre_attack
+      schedule: "0 3 1 * *"   # 1st of month at 03:00 UTC
+    - type: nvd
+      days_back: 30
+      severity: MEDIUM
+      schedule: "0 4 * * *"   # daily at 04:00 UTC
+    - type: confluence
+      spaces:
+        - SOC
+        - IR
+        - SECOPS
+      schedule: "0 2 * * *"   # daily at 02:00 UTC
+    - type: sharepoint
+      site_ids: []            # discover automatically
+      schedule: "0 2 * * 0"   # weekly on Sunday
+
+# ---------------------------------------------------------------------------
+# Rate Limits
+# ---------------------------------------------------------------------------
+rate_limits:
+  api_requests_per_minute: 200
+  tool_executions_per_minute: 100
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+auth:
+  jwt_secret: "${JWT_SECRET}"
+  jwt_algorithm: HS256
+  jwt_expiration_hours: 24
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+observability:
+  tracing:
+    enabled: true
+    sample_rate: 0.1         # 10 % sampling
+  metrics:
+    enabled: true
+  otel_endpoint: "${OTEL_ENDPOINT}"
