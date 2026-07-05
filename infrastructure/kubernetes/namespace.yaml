@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: soc-analyst
+  labels:
+    app.kubernetes.io/name: soc-analyst-agent
+    app.kubernetes.io/part-of: soc-platform
+    app.kubernetes.io/managed-by: kubectl
+    environment: staging
+    team: soc-engineering
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    description: "SOC Analyst Agent - Automated security operations center analysis"
+    owner: "soc-engineering@company.com"
+    cost-center: "sec-ops-2024"
+    scheduler.alpha.kubernetes.io/defaultTolerations: "[]"

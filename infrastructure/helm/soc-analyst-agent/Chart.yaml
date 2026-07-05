@@ -1,0 +1,22 @@
+apiVersion: v2
+name: soc-analyst-agent
+description: Helm chart for the SOC Analyst Agent - an automated security operations center analysis platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/company/soc-analyst-agent
+sources:
+  - https://github.com/company/soc-analyst-agent
+maintainers:
+  - name: SOC Engineering Team
+    email: soc-engineering@company.com
+keywords:
+  - soc
+  - security
+  - incident-response
+  - fastapi
+  - python
+annotations:
+  artifacthub.io/license: Proprietary
+  artifacthub.io/category: security

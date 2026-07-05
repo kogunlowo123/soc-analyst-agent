@@ -1,0 +1,70 @@
+# =============================================================================
+# Stage 1: Dependencies
+# =============================================================================
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+
+COPY dashboard/package.json dashboard/package-lock.json* dashboard/pnpm-lock.yaml* ./
+
+RUN if [ -f pnpm-lock.yaml ]; then \
+        corepack enable pnpm && pnpm install --frozen-lockfile; \
+    elif [ -f package-lock.json ]; then \
+        npm ci; \
+    else \
+        npm install; \
+    fi
+
+# =============================================================================
+# Stage 2: Builder
+# =============================================================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY dashboard/ .
+
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+
+RUN if [ -f pnpm-lock.yaml ]; then \
+        corepack enable pnpm && pnpm run build; \
+    else \
+        npm run build; \
+    fi
+
+# =============================================================================
+# Stage 3: Runtime
+# =============================================================================
+FROM node:20-alpine AS runtime
+
+LABEL maintainer="soc-engineering@company.com" \
+      description="SOC Analyst Dashboard" \
+      org.opencontainers.image.source="https://github.com/company/soc-analyst-agent" \
+      org.opencontainers.image.title="soc-analyst-dashboard"
+
+RUN apk add --no-cache tini curl && \
+    addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+WORKDIR /app
+
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME="0.0.0.0" \
+    PORT=3000
+
+USER nextjs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000/api/health || exit 1
+
+ENTRYPOINT ["tini", "--"]
+CMD ["node", "server.js"]

@@ -1,0 +1,294 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy-image-scan:
+    name: Trivy Container Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        run: |
+          docker build \
+            -f infrastructure/docker/Dockerfile.api \
+            -t soc-analyst-agent:scan \
+            .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "soc-analyst-agent:scan"
+          format: "sarif"
+          output: "trivy-image-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+
+      - name: Upload Trivy scan results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "trivy-image-results.sarif"
+          category: "trivy-image"
+
+  trivy-fs-scan:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scanner
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-fs-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Upload Trivy FS results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "trivy-fs-results.sarif"
+          category: "trivy-filesystem"
+
+  bandit-sast:
+    name: Bandit SAST
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Bandit
+        run: pip install bandit[sarif]
+
+      - name: Run Bandit security linter
+        run: |
+          bandit -r src/ \
+            -f sarif \
+            -o bandit-results.sarif \
+            --severity-level medium \
+            --confidence-level medium \
+            -ll \
+            --exclude "tests/" \
+            || true
+
+      - name: Upload Bandit results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "bandit-results.sarif"
+          category: "bandit"
+
+      - name: Run Bandit with exit code
+        run: |
+          bandit -r src/ \
+            --severity-level high \
+            --confidence-level high \
+            -ll \
+            --exclude "tests/"
+
+  safety-dependency-check:
+    name: Safety Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install safety pip-audit
+
+      - name: Generate requirements file
+        run: pip install -e "." && pip freeze > requirements-frozen.txt
+
+      - name: Run Safety check
+        run: safety check -r requirements-frozen.txt --output json > safety-report.json || true
+
+      - name: Run pip-audit
+        run: |
+          pip-audit \
+            --requirement requirements-frozen.txt \
+            --format json \
+            --output pip-audit-report.json \
+            --desc \
+            || true
+
+      - name: Check for critical vulnerabilities
+        run: |
+          pip-audit \
+            --requirement requirements-frozen.txt \
+            --strict
+
+      - name: Upload dependency reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-reports
+          path: |
+            safety-report.json
+            pip-audit-report.json
+
+  checkov-iac-scan:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-terraform.sarif
+          soft_fail: false
+          skip_check: CKV_AWS_144,CKV_AWS_145
+
+      - name: Upload Checkov Terraform results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "checkov-terraform.sarif"
+          category: "checkov-terraform"
+
+      - name: Run Checkov on Kubernetes
+        if: always()
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/kubernetes/
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: checkov-k8s.sarif
+          soft_fail: false
+
+      - name: Upload Checkov K8s results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "checkov-k8s.sarif"
+          category: "checkov-kubernetes"
+
+      - name: Run Checkov on Helm
+        if: always()
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/helm/
+          framework: helm
+          output_format: sarif
+          output_file_path: checkov-helm.sarif
+          soft_fail: true
+
+      - name: Upload Checkov Helm results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "checkov-helm.sarif"
+          category: "checkov-helm"
+
+      - name: Run Checkov on Dockerfiles
+        if: always()
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/docker/
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: false
+
+      - name: Upload Checkov Dockerfile results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "checkov-docker.sarif"
+          category: "checkov-dockerfile"
+
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs:
+      - trivy-image-scan
+      - trivy-fs-scan
+      - bandit-sast
+      - safety-dependency-check
+      - checkov-iac-scan
+      - secret-scan
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy Image | ${{ needs.trivy-image-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy Filesystem | ${{ needs.trivy-fs-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bandit SAST | ${{ needs.bandit-sast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Safety Dependencies | ${{ needs.safety-dependency-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checkov IaC | ${{ needs.checkov-iac-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Detection | ${{ needs.secret-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if any scan failed
+        if: |
+          needs.trivy-image-scan.result == 'failure' ||
+          needs.bandit-sast.result == 'failure' ||
+          needs.safety-dependency-check.result == 'failure' ||
+          needs.checkov-iac-scan.result == 'failure' ||
+          needs.secret-scan.result == 'failure'
+        run: |
+          echo "::error::One or more security scans failed. Review the results above."
+          exit 1

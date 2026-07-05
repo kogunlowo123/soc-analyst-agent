@@ -1,0 +1,223 @@
+name: CD Pipeline
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: soc-analyst-agent
+  EKS_CLUSTER_NAME_STAGING: soc-analyst-staging
+  EKS_CLUSTER_NAME_PRODUCTION: soc-analyst-production
+  HELM_CHART_PATH: infrastructure/helm/soc-analyst-agent
+
+jobs:
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    outputs:
+      image_uri: ${{ steps.push.outputs.image_uri }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push API image
+        id: push
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ needs.determine-environment.outputs.image_tag }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker buildx build \
+            --file infrastructure/docker/Dockerfile.api \
+            --tag "${IMAGE_URI}" \
+            --tag "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            .
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: [determine-environment, build-and-push]
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        env:
+          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
+        run: |
+          if [ "${ENVIRONMENT}" = "production" ]; then
+            CLUSTER="${EKS_CLUSTER_NAME_PRODUCTION}"
+          else
+            CLUSTER="${EKS_CLUSTER_NAME_STAGING}"
+          fi
+          aws eks update-kubeconfig --name "${CLUSTER}" --region "${AWS_REGION}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.14.0"
+
+      - name: Deploy with Helm
+        env:
+          IMAGE_URI: ${{ needs.build-and-push.outputs.image_uri }}
+          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
+          IMAGE_TAG: ${{ needs.determine-environment.outputs.image_tag }}
+        run: |
+          helm upgrade --install soc-analyst-agent "${HELM_CHART_PATH}" \
+            --namespace soc-analyst \
+            --create-namespace \
+            --set image.repository="${IMAGE_URI%:*}" \
+            --set image.tag="${IMAGE_TAG}" \
+            --set config.APP_ENV="${ENVIRONMENT}" \
+            --values "${HELM_CHART_PATH}/values.yaml" \
+            --wait \
+            --timeout 10m \
+            --atomic
+
+      - name: Verify deployment
+        run: |
+          kubectl -n soc-analyst rollout status deployment/soc-analyst-agent --timeout=300s
+          kubectl -n soc-analyst get pods -l app.kubernetes.io/name=soc-analyst-agent
+
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: [determine-environment, deploy]
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        env:
+          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
+        run: |
+          if [ "${ENVIRONMENT}" = "production" ]; then
+            CLUSTER="${EKS_CLUSTER_NAME_PRODUCTION}"
+          else
+            CLUSTER="${EKS_CLUSTER_NAME_STAGING}"
+          fi
+          aws eks update-kubeconfig --name "${CLUSTER}" --region "${AWS_REGION}"
+
+      - name: Run smoke tests
+        run: |
+          # Port-forward for smoke testing
+          kubectl -n soc-analyst port-forward svc/soc-analyst-agent 8000:8000 &
+          PF_PID=$!
+          sleep 5
+
+          # Health check
+          echo "==> Health check"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Health check failed with status $HTTP_STATUS"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "Health check passed (HTTP $HTTP_STATUS)"
+
+          # OpenAPI schema available
+          echo "==> OpenAPI schema check"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/openapi.json)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "OpenAPI schema not available (HTTP $HTTP_STATUS)"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "OpenAPI schema available (HTTP $HTTP_STATUS)"
+
+          # Metrics endpoint
+          echo "==> Metrics check"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/metrics)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Metrics endpoint not available (HTTP $HTTP_STATUS)"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "Metrics endpoint available (HTTP $HTTP_STATUS)"
+
+          # Cleanup
+          kill $PF_PID 2>/dev/null || true
+          echo "==> All smoke tests passed"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Smoke tests failed for ${{ needs.determine-environment.outputs.environment }} deployment"

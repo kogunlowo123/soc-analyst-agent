@@ -1,0 +1,249 @@
+version: "3.9"
+
+x-common-env: &common-env
+  APP_ENV: development
+  LOG_LEVEL: DEBUG
+  LOG_FORMAT: json
+  DATABASE_URL: postgresql://soc_admin:soc_password@postgres:5432/soc_analyst
+  REDIS_URL: redis://redis:6379/0
+  OPENSEARCH_URL: https://admin:SOCadmin123!@opensearch:9200
+  SECRET_KEY: dev-secret-key-do-not-use-in-production-32chars
+  JWT_SECRET_KEY: dev-jwt-secret-key-do-not-use-in-production
+
+services:
+  # ---------------------------------------------------------------------------
+  # Application Services
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.api
+    container_name: soc-analyst-api
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      SERVER_WORKERS: "2"
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8000"
+      METRICS_ENABLED: "true"
+      TRACING_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.dashboard
+    container_name: soc-analyst-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+      NODE_ENV: development
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.api
+    container_name: soc-analyst-worker
+    command: ["python", "-m", "src.worker.main"]
+    environment:
+      <<: *common-env
+      WORKER_CONCURRENCY: "4"
+      WORKER_PREFETCH_MULTIPLIER: "2"
+      SIEM_INTEGRATION_ENABLED: "true"
+      SIEM_BATCH_SIZE: "50"
+      SIEM_FLUSH_INTERVAL: "10"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro
+      - ./configs:/app/configs:ro
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  # ---------------------------------------------------------------------------
+  # Data Services
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: soc-analyst-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: soc_analyst
+      POSTGRES_USER: soc_admin
+      POSTGRES_PASSWORD: soc_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.utf8 --lc-ctype=en_US.utf8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soc_admin -d soc_analyst"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: soc-analyst-redis
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    container_name: soc-analyst-opensearch
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "SOCadmin123!"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      plugins.security.ssl.http.enabled: "true"
+      plugins.security.ssl.transport.enforce_hostname_verification: "false"
+      plugins.security.allow_unsafe_democertificates: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "false"
+      bootstrap.memory_lock: "true"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --insecure https://localhost:9200/_cluster/health -u admin:SOCadmin123! | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: soc-analyst-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: soc-analyst-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "http://localhost:3001"
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-simple-json-datasource"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  opensearch_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  soc-network:
+    driver: bridge
+    name: soc-analyst-network

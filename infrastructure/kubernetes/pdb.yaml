@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: soc-analyst-agent
+  namespace: soc-analyst
+  labels:
+    app.kubernetes.io/name: soc-analyst-agent
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: soc-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: soc-analyst-agent
+      app.kubernetes.io/component: api

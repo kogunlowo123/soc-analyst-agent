@@ -1,0 +1,236 @@
+# -- Number of replicas for the deployment
+replicaCount: 3
+
+image:
+  # -- Container image repository
+  repository: ""
+  # -- Image pull policy
+  pullPolicy: Always
+  # -- Image tag (defaults to Chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override chart name
+nameOverride: ""
+# -- Override full name
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Whether to create a ServiceAccount
+  create: true
+  # -- Annotations for the ServiceAccount (e.g. IRSA role ARN)
+  annotations:
+    eks.amazonaws.com/role-arn: ""
+  # -- ServiceAccount name override
+  name: ""
+
+# -- Pod-level annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+# -- Pod-level security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8000
+  # -- Target port on the container
+  targetPort: 8000
+
+ingress:
+  # -- Enable ingress
+  enabled: true
+  # -- Ingress class name
+  className: nginx
+  # -- Ingress annotations
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+  # -- Ingress hosts
+  hosts:
+    - host: soc-analyst-api.internal.company.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration
+  tls:
+    - secretName: soc-analyst-agent-tls
+      hosts:
+        - soc-analyst-api.internal.company.com
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+    ephemeral-storage: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+    ephemeral-storage: 512Mi
+
+autoscaling:
+  # -- Enable HPA
+  enabled: true
+  # -- Minimum replicas
+  minReplicas: 3
+  # -- Maximum replicas
+  maxReplicas: 10
+  # -- Target CPU utilization for autoscaling
+  targetCPUUtilizationPercentage: 70
+  # -- Target memory utilization for autoscaling
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+
+# -- Node selector constraints
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling
+tolerations: []
+
+# -- Affinity rules for pod scheduling
+affinity: {}
+
+# -- Topology spread constraints
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+
+podDisruptionBudget:
+  # -- Enable PDB
+  enabled: true
+  # -- Minimum available pods
+  minAvailable: 2
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 30
+
+# -- ConfigMap data for non-sensitive configuration
+config:
+  APP_NAME: "soc-analyst-agent"
+  APP_ENV: "staging"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "8000"
+  SERVER_WORKERS: "4"
+  SERVER_TIMEOUT: "120"
+  DATABASE_POOL_SIZE: "20"
+  DATABASE_MAX_OVERFLOW: "10"
+  DATABASE_POOL_TIMEOUT: "30"
+  DATABASE_POOL_RECYCLE: "1800"
+  DATABASE_SSL_MODE: "require"
+  REDIS_DB: "0"
+  REDIS_MAX_CONNECTIONS: "50"
+  REDIS_SOCKET_TIMEOUT: "5"
+  REDIS_SSL: "true"
+  OPENSEARCH_USE_SSL: "true"
+  OPENSEARCH_VERIFY_CERTS: "true"
+  OPENSEARCH_INDEX_PREFIX: "soc-analyst"
+  OPENSEARCH_TIMEOUT: "30"
+  CORS_ALLOWED_ORIGINS: "https://soc-dashboard.internal.company.com"
+  CORS_ALLOW_CREDENTIALS: "true"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_PERIOD: "60"
+  ALERT_RETENTION_DAYS: "90"
+  INCIDENT_RETENTION_DAYS: "365"
+  METRICS_ENABLED: "true"
+  METRICS_PREFIX: "soc_analyst"
+  TRACING_ENABLED: "true"
+  TRACING_SAMPLE_RATE: "0.1"
+  SIEM_INTEGRATION_ENABLED: "true"
+  SIEM_BATCH_SIZE: "100"
+  SIEM_FLUSH_INTERVAL: "30"
+
+# -- External secret references (keys expected in a pre-existing Secret)
+externalSecretName: "soc-analyst-agent-secrets"
+
+# -- Extra volumes to mount
+extraVolumes:
+  - name: tmp
+    emptyDir:
+      sizeLimit: 100Mi
+  - name: cache
+    emptyDir:
+      sizeLimit: 200Mi
+
+# -- Extra volume mounts for the container
+extraVolumeMounts:
+  - name: tmp
+    mountPath: /tmp
+  - name: cache
+    mountPath: /app/.cache
+
+# -- Deployment strategy
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# -- Revision history limit
+revisionHistoryLimit: 5
+
+# -- Termination grace period
+terminationGracePeriodSeconds: 30

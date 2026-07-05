@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: soc-analyst-agent-config
+  namespace: soc-analyst
+  labels:
+    app.kubernetes.io/name: soc-analyst-agent
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: soc-platform
+data:
+  APP_NAME: "soc-analyst-agent"
+  APP_ENV: "staging"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "8000"
+  SERVER_WORKERS: "4"
+  SERVER_TIMEOUT: "120"
+  DATABASE_POOL_SIZE: "20"
+  DATABASE_MAX_OVERFLOW: "10"
+  DATABASE_POOL_TIMEOUT: "30"
+  DATABASE_POOL_RECYCLE: "1800"
+  DATABASE_SSL_MODE: "require"
+  REDIS_DB: "0"
+  REDIS_MAX_CONNECTIONS: "50"
+  REDIS_SOCKET_TIMEOUT: "5"
+  REDIS_SSL: "true"
+  OPENSEARCH_USE_SSL: "true"
+  OPENSEARCH_VERIFY_CERTS: "true"
+  OPENSEARCH_INDEX_PREFIX: "soc-analyst"
+  OPENSEARCH_TIMEOUT: "30"
+  CORS_ALLOWED_ORIGINS: "https://soc-dashboard.internal.company.com"
+  CORS_ALLOW_CREDENTIALS: "true"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_PERIOD: "60"
+  ALERT_RETENTION_DAYS: "90"
+  INCIDENT_RETENTION_DAYS: "365"
+  METRICS_ENABLED: "true"
+  METRICS_PREFIX: "soc_analyst"
+  TRACING_ENABLED: "true"
+  TRACING_SAMPLE_RATE: "0.1"
+  SIEM_INTEGRATION_ENABLED: "true"
+  SIEM_BATCH_SIZE: "100"
+  SIEM_FLUSH_INTERVAL: "30"

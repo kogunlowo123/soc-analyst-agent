@@ -1,0 +1,70 @@
+# =============================================================================
+# Stage 1: Builder
+# =============================================================================
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+COPY src/ ./src/
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --prefix=/install .
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM python:3.11-slim AS runtime
+
+LABEL maintainer="soc-engineering@company.com" \
+      description="SOC Analyst Agent API" \
+      org.opencontainers.image.source="https://github.com/company/soc-analyst-agent" \
+      org.opencontainers.image.title="soc-analyst-agent-api"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libpq5 \
+        curl \
+        tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get purge -y --auto-remove
+
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid 1000 --shell /bin/false --create-home appuser
+
+COPY --from=builder /install /usr/local
+COPY --chown=appuser:appuser src/ /app/src/
+COPY --chown=appuser:appuser configs/ /app/configs/
+
+WORKDIR /app
+
+RUN mkdir -p /app/.cache /tmp && \
+    chown -R appuser:appuser /app/.cache /tmp
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    APP_ENV=production
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["tini", "--"]
+CMD ["python", "-m", "uvicorn", "src.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "4", \
+     "--timeout-keep-alive", "120", \
+     "--access-log", \
+     "--log-level", "info"]
