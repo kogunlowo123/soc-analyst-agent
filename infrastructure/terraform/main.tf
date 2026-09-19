@@ -154,7 +154,7 @@ module "vpc" {
   default_security_group_tags   = { Name = "${local.name_prefix}-default-sg" }
 
   public_subnet_tags = {
-    "kubernetes.io/role/elb"                    = 1
+    "kubernetes.io/role/elb"                     = 1
     "kubernetes.io/cluster/${local.name_prefix}" = "shared"
     Tier                                         = "public"
   }
@@ -305,14 +305,14 @@ module "eks" {
 
   eks_managed_node_groups = {
     general = {
-      name            = "${local.name_prefix}-general"
-      instance_types  = var.eks_node_instance_types
-      capacity_type   = "ON_DEMAND"
-      min_size        = var.eks_node_min_size
-      max_size        = var.eks_node_max_size
-      desired_size    = var.eks_node_desired_size
-      disk_size       = 50
-      ami_type        = "AL2_x86_64"
+      name           = "${local.name_prefix}-general"
+      instance_types = var.eks_node_instance_types
+      capacity_type  = "ON_DEMAND"
+      min_size       = var.eks_node_min_size
+      max_size       = var.eks_node_max_size
+      desired_size   = var.eks_node_desired_size
+      disk_size      = 50
+      ami_type       = "AL2_x86_64"
 
       labels = {
         role = "general"
@@ -324,14 +324,14 @@ module "eks" {
     }
 
     spot = {
-      name            = "${local.name_prefix}-spot"
-      instance_types  = var.eks_spot_instance_types
-      capacity_type   = "SPOT"
-      min_size        = 0
-      max_size        = var.eks_node_max_size
-      desired_size    = 0
-      disk_size       = 50
-      ami_type        = "AL2_x86_64"
+      name           = "${local.name_prefix}-spot"
+      instance_types = var.eks_spot_instance_types
+      capacity_type  = "SPOT"
+      min_size       = 0
+      max_size       = var.eks_node_max_size
+      desired_size   = 0
+      disk_size      = 50
+      ami_type       = "AL2_x86_64"
 
       labels = {
         role     = "spot"
@@ -528,8 +528,8 @@ module "rds" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
-  deletion_protection = var.environment == "production"
-  skip_final_snapshot = var.environment != "production"
+  deletion_protection              = var.environment == "production"
+  skip_final_snapshot              = var.environment != "production"
   final_snapshot_identifier_prefix = "${local.name_prefix}-final"
 
   performance_insights_enabled    = true
