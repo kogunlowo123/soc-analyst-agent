@@ -2063,3 +2063,60 @@ Report security vulnerabilities privately via GitHub Security Advisories or emai
 ---
 
 Built as part of the Enterprise AI Agent Platform.
+
+<!-- project-structure -->
+## Project structure
+
+```text
+├── .github/
+├── blueprints/
+│   ├── rag-agentic/
+│   ├── rag-graph/
+│   ├── rag-hybrid/
+│   ├── rag-multimodal/
+│   └── rag-naive/
+├── configs/
+│   ├── prompts/
+│   ├── dev.yaml
+│   ├── prod.yaml
+│   └── staging.yaml
+├── docs/
+│   ├── a2a/
+│   ├── adr/
+│   ├── api/
+│   ├── architecture/
+│   ├── deployment/
+│   ├── diagrams/
+│   ├── evaluation/
+│   ├── mcp/
+│   └── … 9 more
+├── factory/
+│   ├── templates/
+│   ├── catalog.yaml
+│   └── scaffold.sh
+├── infrastructure/
+│   ├── docker/
+│   ├── helm/
+│   ├── kubernetes/
+│   └── terraform/
+├── live/
+│   ├── _bootstrap/
+│   ├── dev/
+│   ├── prod/
+│   └── staging/
+├── modules/
+│   ├── appops/
+│   ├── contracts/
+│   ├── devops/
+│   ├── netops/
+│   └── secops/
+├── platform/
+│   ├── libs/
+│   ├── reference-apps/
+… (truncated)
+```
+
+<!-- architecture -->
+## Architecture
+
+![Architecture diagram](docs/architecture.svg)
